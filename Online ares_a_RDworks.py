@@ -20,8 +20,8 @@ quitar el sticker para que el cloruro ferrico ataque solo ahi.
   * Tambien lee PDF, SVG y DXF exportados de ARES (opciones secundarias).
 
 Instalacion (una sola vez):
-    pip install shapely ezdxf pymupdf svgelements pillow
-    (para leer solo Gerber basta: pip install shapely pillow ezdxf)
+    pip install shapely pillow                (basta para leer el ZIP/Gerber de ARES)
+    pip install ezdxf pymupdf svgelements     (solo si ademas quieres leer DXF, PDF o SVG)
 
 Uso:
     python ares_a_laser.py "Proyecto - CADCAM.zip"     (ZIP o carpeta de Gerber de ARES)
@@ -42,7 +42,7 @@ import re
 import sys
 from collections import Counter, defaultdict
 
-VERSION = "1.4"
+VERSION = "1.5"
 
 try:
     import numpy as np
@@ -1746,14 +1746,14 @@ def _dxf_r12(ruta, entidades, capa, color):
     out = []
     for e in entidades:
         if e[0] == "poli":
-            out += ["  0", "POLYLINE", "  5", nuevo(), "  8", capa, " 66", "     1",
+            out += ["  0", "POLYLINE", "  5", nuevo(), "  8", capa, " 62", str(color), " 66", "     1",
                     " 10", "0.0", " 20", "0.0", " 30", "0.0", " 70", "     1"]
             for x, y in e[1]:
                 out += ["  0", "VERTEX", "  5", nuevo(), "  8", capa, " 10", f(x), " 20", f(y), " 30", "0.0",
                         " 70", "     0"]
             out += ["  0", "SEQEND", "  5", nuevo(), "  8", capa]
         else:
-            out += ["  0", "CIRCLE", "  5", nuevo(), "  8", capa, " 10", f(e[1]), " 20", f(e[2]), " 30", "0.0",
+            out += ["  0", "CIRCLE", "  5", nuevo(), "  8", capa, " 62", str(color), " 10", f(e[1]), " 20", f(e[2]), " 30", "0.0",
                     " 40", f(e[3])]
     texto = (plantilla.replace("@CAPA@", capa).replace("@COLOR@", str(color)).replace("@SEED@", "%X" % (h[0] + 1))
              .replace("@ENTIDADES@", "\n".join(out) + ("\n" if out else "")))
@@ -1781,7 +1781,7 @@ def escribir_dxf(ruta, polys, version):
     for p in polys:
         for r in anillos(p):
             pts = [(round(x, 4), round(y, 4)) for x, y in r.coords]     # el ultimo punto repite al primero
-            msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": capa})
+            msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": capa, "color": 5})
     doc.saveas(ruta)
 
 
@@ -1799,20 +1799,50 @@ def escribir_plt(ruta, polys):
         f.write("\n".join(out))
 
 
-def escribir_svg(ruta, polys, W, H, contorno=False):
+def escribir_svg(ruta, polys, W, H):
     partes = []
     for p in polys:
         for r in anillos(p):
             c = list(r.coords)[:-1]
             partes.append("M" + " L".join("%.3f %.3f" % (x, H - y) for x, y in c) + " Z")
-    estilo = ('fill="none" stroke="#000000" stroke-width="0.05"' if contorno
-              else 'fill="#000000" fill-rule="evenodd" stroke="none"')
     svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
            '<svg xmlns="http://www.w3.org/2000/svg" width="%.3fmm" height="%.3fmm" viewBox="0 0 %.3f %.3f">\n'
-           '<path %s d="%s"/>\n</svg>\n'
-           % (W, H, W, H, estilo, " ".join(partes)))
+           '<path fill="#000000" fill-rule="evenodd" stroke="none" d="%s"/>\n</svg>\n'
+           % (W, H, W, H, " ".join(partes)))
     with open(ruta, "w", encoding="utf-8") as f:
         f.write(svg)
+
+
+def escribir_svg_perfo(ruta, perfo, W, H):
+    """SVG de perforaciones para CORTAR: contornos rojos sin relleno (circulos verdaderos)."""
+    estilo = 'fill="none" stroke="#ff0000" stroke-width="0.1"'
+    el = ['<circle cx="%.4f" cy="%.4f" r="%.4f" %s/>' % (x, H - y, d / 2.0, estilo) for x, y, d in perfo["circulos"]]
+    for p in poligonos_perforacion({"circulos": [], "ranuras": perfo["ranuras"]}):
+        c = list(p.exterior.coords)[:-1]
+        el.append('<path %s d="M%s Z"/>' % (estilo, " L".join("%.3f %.3f" % (x, H - y) for x, y in c)))
+    svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<svg xmlns="http://www.w3.org/2000/svg" width="%.3fmm" height="%.3fmm" viewBox="0 0 %.3f %.3f">\n'
+           '%s\n</svg>\n' % (W, H, W, H, "\n".join(el)))
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write(svg)
+
+
+def escribir_png_contornos(ruta, perfo, W, H, dpi, color=(220, 0, 0)):
+    """Vista de los contornos de corte (rojo sobre blanco). Sirve de vista previa; no es un archivo para el laser."""
+    from PIL import Image, ImageDraw
+    s = dpi / 25.4
+    wpx, hpx = int(math.ceil(W * s)), int(math.ceil(H * s))
+    img = Image.new("RGB", (wpx, hpx), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    grosor = 2 if dpi >= 120 else 1
+    for x, y, dd in perfo["circulos"]:
+        r, cx, cy = max(dd / 2.0 * s, 2.0), x * s, (H - y) * s
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=grosor)
+    for p in poligonos_perforacion({"circulos": [], "ranuras": perfo["ranuras"]}):
+        pts = [(x * s, (H - y) * s) for x, y in p.exterior.coords]
+        d.line(pts, fill=color, width=grosor)
+    img.save(ruta, dpi=(dpi, dpi), optimize=True)
+    return wpx, hpx
 
 
 def escribir_png(ruta, polys, W, H, dpi, suave=True):
@@ -1899,9 +1929,9 @@ def escribir_dxf_perfo(ruta, perfo, version):
     msp = doc.modelspace()
     for e in ents:
         if e[0] == "circulo":
-            msp.add_circle((round(e[1], 4), round(e[2], 4)), round(e[3], 4), dxfattribs={"layer": capa})
+            msp.add_circle((round(e[1], 4), round(e[2], 4)), round(e[3], 4), dxfattribs={"layer": capa, "color": 1})
         else:
-            msp.add_lwpolyline([(round(x, 4), round(y, 4)) for x, y in e[1]], close=True, dxfattribs={"layer": capa})
+            msp.add_lwpolyline([(round(x, 4), round(y, 4)) for x, y in e[1]], close=True, dxfattribs={"layer": capa, "color": 1})
     doc.saveas(ruta)
 
 
@@ -1962,6 +1992,8 @@ def crear_parser():
     gp.add_argument("--sin-perforaciones", dest="perfo", action="store_false",
                     help="no generar ni preguntar por los archivos de perforaciones")
     p.set_defaults(perfo=None)
+    p.add_argument("--png-perforaciones", dest="png_perfo", action="store_true",
+                   help="ademas de los contornos de corte (DXF/SVG/PLT), un PNG con circulos rellenos para modo Scan")
     p.add_argument("--kerf", type=float, default=None, metavar="MM",
                    help="ancho del corte del laser (mm): los circulos de corte se achican esto para que el agujero "
                         "final salga del diametro exacto")
@@ -2040,24 +2072,29 @@ def generar_salidas(ent, a, base1, base2, espejo, margen, quiere, log):
             log("AVISO: con ese kerf no queda ninguna perforacion que cortar.")
         else:
             polis = poligonos_perforacion(perfo)
+            vect = [f for f in a.formatos if f in ("dxf", "plt", "svg")]
             log("")
-            log("Archivos generados (TRABAJO 2: perforaciones, MISMO origen, orientacion y tamano que el trabajo 1):")
-            if "png" in a.formatos:
-                wpx, hpx = escribir_png(base2 + ".png", polis, W, H, a.dpi, suave)
-                rutas.append(base2 + ".png")
-                log("  %s.png   (%d circulos negros, %dx%d px; para modo Scan)" % (base2, len(polis), wpx, hpx))
-            if "dxf" in a.formatos:
+            log("Archivos generados (TRABAJO 2: contornos de las perforaciones para CORTAR; MISMO origen, orientacion "
+                "y tamano que el trabajo 1):")
+            if not vect:
+                vect = ["dxf", "svg"]
+                log("  (el trabajo 2 se entrega en formato vectorial: DXF y SVG)")
+            if "dxf" in vect:
                 escribir_dxf_perfo(base2 + ".dxf", perfo, a.dxf_version)
                 rutas.append(base2 + ".dxf")
-                log("  %s.dxf   (circulos verdaderos, capa roja; para modo Cut)" % base2)
-            if "plt" in a.formatos:
+                log("  %s.dxf   (circulos verdaderos en ROJO; para modo Cut)" % base2)
+            if "svg" in vect:
+                escribir_svg_perfo(base2 + ".svg", perfo, W, H)
+                rutas.append(base2 + ".svg")
+                log("  %s.svg   (contornos rojos sin relleno; para modo Cut)" % base2)
+            if "plt" in vect:
                 escribir_plt(base2 + ".plt", polis)
                 rutas.append(base2 + ".plt")
-                log("  %s.plt" % base2)
-            if "svg" in a.formatos:
-                escribir_svg(base2 + ".svg", polis, W, H)
-                rutas.append(base2 + ".svg")
-                log("  %s.svg" % base2)
+                log("  %s.plt   (contornos; para modo Cut)" % base2)
+            if getattr(a, "png_perfo", False):
+                wpx, hpx = escribir_png(base2 + ".png", polis, W, H, a.dpi, suave)
+                rutas.append(base2 + ".png")
+                log("  %s.png   (opcional: %d circulos negros RELLENOS, %dx%d px; para modo Scan)" % (base2, len(polis), wpx, hpx))
             log("  Diametros de corte (mm): %s%s" % (
                 ", ".join("%.2f x%d" % kv for kv in sorted(Counter(round(d, 2) for _, _, d in perfo["circulos"]).items())),
                 (" | kerf compensado: %.2f mm" % a.kerf) if a.kerf else ""))
@@ -2161,7 +2198,7 @@ def web_convertir(dir_in, dir_out, opciones_json):
     def log(s):
         lineas.append(s.replace(dir_out + os.sep, "").replace(dir_out + "/", ""))
 
-    res = {"ok": False, "error": "", "log": "", "archivos": [], "vista": "", "ancho": 0, "alto": 0}
+    res = {"ok": False, "error": "", "log": "", "archivos": [], "vista": "", "vista2": "", "ancho": 0, "alto": 0}
     try:
         o = json.loads(opciones_json)
         textos, forzados, cobre, borde = {}, [], None, None
@@ -2198,6 +2235,7 @@ def web_convertir(dir_in, dir_out, opciones_json):
         a.kerf = float(o.get("kerf") or 0)
         a.formatos = [f for f in o.get("formatos", ["png", "dxf"]) if f in ("png", "dxf", "plt", "svg")] or ["png"]
         a.dxf_version = "R12"
+        a.png_perfo = bool(o.get("png_perfo"))
         if a.margen is not None and a.margen < 0:
             raise ErrorUsuario("El margen no puede ser negativo.")
 
@@ -2225,11 +2263,15 @@ def web_convertir(dir_in, dir_out, opciones_json):
         rutas, W, H, polys, perfo = generar_salidas(ent, a, os.path.join(dir_out, stem + sufijo),
                                                     os.path.join(dir_out, stem + "_perforaciones"),
                                                     espejo, margen, quiere, log)
-        # vista previa (no se descarga): lo que graba el laser, negro sobre blanco
-        prev = poligonos_perforacion(perfo) if a.solo_perfo else polys
+        # vistas previas (no se descargan): trabajo 1 = lo que graba el laser (negro); trabajo 2 = contornos de corte (rojo)
         dpi_prev = max(40.0, min(200.0, 1400.0 / (W / 25.4)))
-        escribir_png(os.path.join(dir_out, "_vista.png"), prev, W, H, dpi_prev, True)
-        res["vista"] = "_vista.png"
+        if not a.solo_perfo:
+            escribir_png(os.path.join(dir_out, "_vista.png"), polys, W, H, dpi_prev, True)
+            res["vista"] = "_vista.png"
+        if quiere and (perfo["circulos"] or perfo["ranuras"]):
+            nom = "_vista2.png" if not a.solo_perfo else "_vista.png"
+            escribir_png_contornos(os.path.join(dir_out, nom), perfo, W, H, dpi_prev)
+            res["vista2" if not a.solo_perfo else "vista"] = nom
         if len(rutas) > 1:
             zr = os.path.join(dir_out, stem + "_resultado.zip")
             with zipfile.ZipFile(zr, "w", zipfile.ZIP_DEFLATED) as z:
@@ -2240,6 +2282,7 @@ def web_convertir(dir_in, dir_out, opciones_json):
                  "svg": "image/svg+xml", "zip": "application/zip"}
         res["archivos"] = [{"nombre": os.path.basename(r), "mime": mimes.get(r.rsplit(".", 1)[-1], "application/octet-stream")}
                            for r in rutas]
+        res["salida"] = salida
         res["ancho"], res["alto"], res["ok"] = round(W, 2), round(H, 2), True
     except ErrorUsuario as e:
         res["error"] = str(e)
