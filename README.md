@@ -4,7 +4,7 @@
 
 Herramienta gratuita que convierte lo que entrega **Proteus ARES** (Gerber RS-274X + taladros Excellon) en los archivos que necesita una cortadora láser para fabricar una placa con el método del *sticker + cloruro férrico*. Funciona **directamente en el navegador**: no hay que instalar nada y tus archivos nunca salen de tu equipo.
 
-**Probar la herramienta:** <https://TU-USUARIO.github.io/proteus-laser/> *(reemplaza por la dirección de tu propio repositorio)*
+**Probar la herramienta:** https://thecrisxd.github.io/Gerber-to-RDworks/
 
 ---
 
