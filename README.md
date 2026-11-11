@@ -216,5 +216,5 @@ ARES entrega un ZIP con archivos `.GBR` y `.DRL`.
 
 ## Licencia y autoría
 
-- **Licencia:** por definir (por ejemplo, MIT).
-- **Autor:** TU NOMBRE.
+- **Licencia:** por definir.
+- **Autor:** TheCrisXD.
